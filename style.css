@@ -1,0 +1,41 @@
+        /* Base styles matching the design */
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f3f4f6;
+            padding-bottom: 5rem; /* Space for fixed bottom nav */
+        }
+        /* Mobile container centering and sizing */
+        #app-container {
+            max-width: 420px;
+            margin: 0 auto;
+            min-height: 100vh;
+            background-color: white;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+            position: relative;
+        }
+        /* Style the green header logo text */
+        .gtv-logo {
+            font-weight: 800;
+            color: #10B981; /* Emerald 500 */
+            line-height: 1;
+            font-size: 1.5rem;
+            display: inline-block;
+            border: 2px solid #10B981;
+            padding: 0.1rem 0.3rem;
+            border-radius: 6px;
+        }
+        /* Custom map area styling for mockup */
+        #map-mockup {
+            height: 250px;
+            background-color: #f7f7f7;
+            border-radius: 12px;
+            position: relative;
+            overflow: hidden;
+            border: 1px solid #e5e7eb;
+        }
+        .map-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            position: absolute;
+        }
