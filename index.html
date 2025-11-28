@@ -1,0 +1,1127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GreenTrack - Eco App (Local Storage)</title>
+    <!-- Load Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Load Font Awesome for icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
+    
+    <style>
+        /* Base styles matching the design */
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f3f4f6;
+            padding-bottom: 5rem; /* Space for fixed bottom nav */
+        }
+        /* Mobile container centering and sizing */
+        #app-container {
+            max-width: 420px;
+            margin: 0 auto;
+            min-height: 100vh;
+            background-color: white;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+            position: relative;
+        }
+        /* Style the green header logo text */
+        .gtv-logo {
+            font-weight: 800;
+            color: #10B981; /* Emerald 500 */
+            line-height: 1;
+            font-size: 1.5rem;
+            display: inline-block;
+            border: 2px solid #10B981;
+            padding: 0.1rem 0.3rem;
+            border-radius: 6px;
+        }
+        /* Custom map area styling for mockup */
+        #map-mockup {
+            height: 250px;
+            background-color: #f7f7f7;
+            border-radius: 12px;
+            position: relative;
+            overflow: hidden;
+            border: 1px solid #e5e7eb;
+        }
+        .map-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            position: absolute;
+        }
+    </style>
+</head>
+<body class="antialiased">
+
+    <script>
+        // --- LOCAL STORAGE UTILITIES ---
+        const LS_KEY_USERS = 'gt_users';
+        const LS_KEY_LOGGED_USER = 'gt_logged_user_id';
+        const LS_KEY_TREELOGS = 'gt_tree_logs';
+        const LS_KEY_REPORTS = 'gt_reports';
+
+        function getStoredUsers() {
+            try {
+                return JSON.parse(localStorage.getItem(LS_KEY_USERS) || '{}');
+            } catch (e) {
+                console.error("Error reading users from local storage:", e);
+                return {};
+            }
+        }
+
+        function setStoredUsers(users) {
+            localStorage.setItem(LS_KEY_USERS, JSON.stringify(users));
+        }
+
+        function getStoredData(key) {
+            try {
+                return JSON.parse(localStorage.getItem(key) || '[]');
+            } catch (e) {
+                console.error(`Error reading ${key} from local storage:`, e);
+                return [];
+            }
+        }
+
+        function setStoredData(key, data) {
+            localStorage.setItem(key, JSON.stringify(data));
+        }
+
+        // --- GLOBAL STATE & ROUTING ---
+        window.appState = {
+            userId: localStorage.getItem(LS_KEY_LOGGED_USER),
+            userRole: 'volunteer',
+            isAuthenticated: !!localStorage.getItem(LS_KEY_LOGGED_USER),
+            userProfile: {
+                displayName: 'Volunteer',
+                treesLogged: 0,
+                pointsEarned: 0,
+                ecoTeam: null
+            }
+        };
+
+        const router = {
+            routes: {
+                'login': 'login-page',
+                'signup': 'signup-page',
+                'dashboard': 'dashboard-page',
+                'map': 'map-page',
+                'events': 'events-page',
+                'guide': 'guide-page',
+                'profile': 'profile-page',
+            },
+            currentRoute: 'login',
+
+            showPage(pageName) {
+                const pages = document.querySelectorAll('.page-content');
+                pages.forEach(p => p.classList.add('hidden'));
+
+                const targetPageId = this.routes[pageName];
+                const targetPage = document.getElementById(targetPageId);
+                if (targetPage) {
+                    targetPage.classList.remove('hidden');
+                    this.currentRoute = pageName;
+                    // Update the active nav item
+                    document.querySelectorAll('.nav-item').forEach(item => {
+                        item.classList.remove('text-green-600', 'font-bold');
+                        if (item.getAttribute('data-page') === pageName) {
+                            item.classList.add('text-green-600', 'font-bold');
+                        }
+                    });
+                }
+            },
+            
+            navigate(pageName) {
+                if (pageName === 'login' || pageName === 'signup') {
+                    this.showPage(pageName);
+                } else if (window.appState.isAuthenticated) {
+                    this.showPage(pageName);
+                } else {
+                    this.showPage('login');
+                    console.warn("Attempted to navigate to protected route without authentication.");
+                }
+            }
+        };
+
+        window.router = router;
+
+        // --- AUTHENTICATION FUNCTIONS (LOCAL STORAGE) ---
+        function generateUniqueId() {
+            return 'user-' + Date.now() + Math.random().toString(16).slice(2);
+        }
+
+        async function handleSignUp(isOrganizer, email, password, teamName = null) {
+            const users = getStoredUsers();
+            if (Object.values(users).some(user => user.email === email)) {
+                alertCustom('Error', 'User with this email already exists.');
+                return;
+            }
+
+            const userId = generateUniqueId();
+            const role = isOrganizer ? 'organizer' : 'volunteer';
+            const displayName = email.split('@')[0];
+
+            users[userId] = {
+                userId,
+                email,
+                password, // NOTE: Storing plain password for simulation ONLY. NEVER do this in production.
+                role,
+                displayName,
+                treesLogged: 0,
+                pointsEarned: 0,
+                ecoTeam: teamName
+            };
+            setStoredUsers(users);
+
+            // Directly log the user in after successful sign up
+            loginUser(userId, users[userId]);
+            alertCustom('Success', 'Account created! Logging in...');
+            router.navigate('dashboard');
+        }
+
+        async function handleLogin(email, password) {
+            const users = getStoredUsers();
+            const userEntry = Object.entries(users).find(([id, user]) => user.email === email && user.password === password);
+
+            if (userEntry) {
+                const [userId, userData] = userEntry;
+                loginUser(userId, userData);
+                router.navigate('dashboard');
+            } else {
+                alertCustom('Error', 'Invalid email or password.');
+            }
+        }
+
+        function loginUser(userId, userData) {
+            localStorage.setItem(LS_KEY_LOGGED_USER, userId);
+            window.appState.userId = userId;
+            window.appState.isAuthenticated = true;
+            updateUserProfile(userData);
+        }
+
+        async function handleSignOut() {
+            localStorage.removeItem(LS_KEY_LOGGED_USER);
+            window.appState.userId = null;
+            window.appState.isAuthenticated = false;
+            window.appState.userRole = 'volunteer';
+            router.navigate('login');
+        }
+
+        function recoverPassword(email) {
+            alertCustom('Info', 'Password reset simulation: If this were real, an email would be sent to ' + email + '.');
+            console.log("Simulated: password recovery requested for:", email);
+        }
+
+        // --- UI / DATA UPDATE FUNCTIONS ---
+
+        function updateUserProfile(userData) {
+            if (!userData) {
+                console.error("No user data provided for update.");
+                return;
+            }
+            window.appState.userProfile = userData;
+            window.appState.userRole = userData.role;
+            
+            // Update UI
+            const name = userData.displayName || 'Volunteer';
+            document.getElementById('welcome-name').textContent = `Hello, ${name}!`;
+            document.getElementById('profile-name').textContent = name;
+            document.getElementById('profile-role').textContent = userData.role || 'Volunteer';
+            document.getElementById('profile-userid-display').textContent = userData.userId || 'N/A';
+            document.getElementById('dashboard-trees-logged').textContent = userData.treesLogged || 0;
+            document.getElementById('dashboard-points-earned').textContent = userData.pointsEarned || 0;
+        }
+
+        function loadInitialData() {
+            if (window.appState.isAuthenticated) {
+                const users = getStoredUsers();
+                const user = users[window.appState.userId];
+                if (user) {
+                    updateUserProfile(user);
+                    router.navigate('dashboard');
+                } else {
+                    handleSignOut(); // User ID in storage is invalid
+                }
+            } else {
+                router.navigate('login');
+            }
+        }
+        
+        // --- MODAL AND UI LOGIC ---
+
+        function setupModal(modalId, openBtnId, closeBtnId, submitBtnId, handleSubmit) {
+            const modal = document.getElementById(modalId);
+            const openBtn = document.getElementById(openBtnId);
+            const closeBtn = document.getElementById(closeBtnId);
+            const submitBtn = document.getElementById(submitBtnId);
+
+            if (openBtn) openBtn.onclick = () => modal.classList.remove('hidden');
+            if (closeBtn) closeBtn.onclick = () => modal.classList.add('hidden');
+            if (submitBtn) {
+                submitBtn.onclick = (e) => {
+                    e.preventDefault();
+                    if (handleSubmit()) {
+                        modal.classList.add('hidden');
+                    }
+                };
+            }
+            // Close when clicking outside the modal content
+            modal.addEventListener('click', (e) => {
+                if (e.target === modal) {
+                    modal.classList.add('hidden');
+                }
+            });
+        }
+        window.setupModal = setupModal; 
+
+        function alertCustom(title, message) {
+            const modal = document.getElementById('custom-alert');
+            document.getElementById('alert-title').textContent = title;
+            document.getElementById('alert-message').textContent = message;
+            modal.classList.remove('hidden');
+            // Auto-hide after a few seconds
+            setTimeout(() => {
+                modal.classList.add('hidden');
+            }, 3000);
+        }
+        window.alertCustom = alertCustom; 
+
+        // --- EVENT HANDLER SETUP (onload) ---
+
+        window.onload = function() {
+            // General Navigation
+            document.querySelectorAll('.nav-item').forEach(item => {
+                item.addEventListener('click', () => {
+                    const page = item.getAttribute('data-page');
+                    router.navigate(page);
+                });
+            });
+            
+            // --- AUTH PAGES HANDLERS ---
+            document.getElementById('login-form')?.addEventListener('submit', (e) => {
+                e.preventDefault();
+                const email = document.getElementById('login-email').value;
+                const password = document.getElementById('login-password').value;
+                handleLogin(email, password);
+            });
+
+            document.getElementById('signup-form')?.addEventListener('submit', (e) => {
+                e.preventDefault();
+                const email = document.getElementById('signup-email').value;
+                const password = document.getElementById('signup-password').value;
+                const roleSelect = document.getElementById('signup-role');
+                const isOrganizer = roleSelect ? roleSelect.value === 'organizer' : false;
+                const teamName = document.getElementById('signup-team-name')?.value || '';
+                handleSignUp(isOrganizer, email, password, teamName);
+            });
+            
+            document.getElementById('signup-role')?.addEventListener('change', (e) => {
+                const teamNameGroup = document.getElementById('team-name-group');
+                if (e.target.value === 'organizer') {
+                    teamNameGroup.classList.remove('hidden');
+                } else {
+                    teamNameGroup.classList.add('hidden');
+                }
+            });
+            
+            document.getElementById('forgot-password-link')?.addEventListener('click', (e) => {
+                e.preventDefault();
+                const email = document.getElementById('login-email').value;
+                if (email) {
+                    recoverPassword(email);
+                } else {
+                    alertCustom('Input Needed', 'Please enter your email in the field above.');
+                }
+            });
+            
+            document.getElementById('sign-up-here-link')?.addEventListener('click', (e) => {
+                e.preventDefault();
+                router.navigate('signup');
+            });
+            
+            document.getElementById('login-here-link')?.addEventListener('click', (e) => {
+                e.preventDefault();
+                router.navigate('login');
+            });
+
+            // --- PROFILE HANDLERS ---
+            document.getElementById('logout-btn')?.addEventListener('click', handleSignOut);
+            document.getElementById('view-achievements-btn')?.addEventListener('click', () => {
+                document.getElementById('achievements-modal').classList.remove('hidden');
+            });
+            document.getElementById('close-achievements-modal')?.addEventListener('click', () => {
+                document.getElementById('achievements-modal').classList.add('hidden');
+            });
+
+            // --- MODAL SETUP ---
+            
+            // 5. Tree Planting Tracker (Log Tree)
+            const handleLogTreeSubmit = () => {
+                const species = document.getElementById('log-tree-species').value;
+                const location = document.getElementById('log-tree-location').value;
+                const photoInput = document.getElementById('log-tree-photo');
+                const photoFile = photoInput.files[0];
+
+                if (!species || !location) {
+                    alertCustom('Validation', 'Species and Location details are required.');
+                    return false;
+                }
+                
+                const currentUserId = window.appState.userId;
+                if (!currentUserId) {
+                    alertCustom('Error', 'User not authenticated.');
+                    return false;
+                }
+                
+                // A. Add Tree Log (Local Storage)
+                const treeLogs = getStoredData(LS_KEY_TREELOGS);
+                treeLogs.push({
+                    id: generateUniqueId(),
+                    userId: currentUserId,
+                    species: species,
+                    location: location,
+                    date: new Date().toISOString(),
+                    photoUploaded: !!photoFile ? photoFile.name : 'No photo',
+                    co2ImpactEstimate: 10
+                });
+                setStoredData(LS_KEY_TREELOGS, treeLogs);
+
+                // B. Update User Progress
+                const users = getStoredUsers();
+                const user = users[currentUserId];
+                if (user) {
+                    user.treesLogged = (user.treesLogged || 0) + 1;
+                    user.pointsEarned = (user.pointsEarned || 0) + 5;
+                    setStoredUsers(users);
+                    // Update global state and UI
+                    updateUserProfile(user);
+                }
+
+                alertCustom('Success', 'Tree planting logged! Progress updated.');
+                // Reset form fields
+                document.getElementById('log-tree-form').reset();
+                return true;
+            };
+
+            // 7. Report Feature (Log Report)
+            const handleLogReportSubmit = () => {
+                const nearestLocation = document.getElementById('log-report-location').value;
+                const summary = document.getElementById('log-report-summary').value;
+                const detailedReport = document.getElementById('log-report-details').value;
+                const photoInput = document.getElementById('log-report-photo');
+                const photoFile = photoInput.files[0];
+
+                if (!summary) {
+                    alertCustom('Validation', 'Report Summary is required.');
+                    return false;
+                }
+                
+                const currentUserId = window.appState.userId;
+                if (!currentUserId) {
+                    alertCustom('Error', 'User not authenticated.');
+                    return false;
+                }
+
+                // C. Add Report Log (Local Storage)
+                const reports = getStoredData(LS_KEY_REPORTS);
+                reports.push({
+                    id: generateUniqueId(),
+                    reporterId: currentUserId,
+                    nearestLocation: nearestLocation,
+                    summary: summary,
+                    details: detailedReport,
+                    date: new Date().toISOString(),
+                    status: 'Pending Verification',
+                    photoUploaded: !!photoFile ? photoFile.name : 'No photo',
+                });
+                setStoredData(LS_KEY_REPORTS, reports);
+
+                alertCustom('Success', 'Environmental issue reported! An Organizer/EcoTeam will be notified for verification.');
+                // Reset form fields
+                document.getElementById('log-report-form').reset();
+                return true;
+            };
+
+            // Setup Log Tree Modal
+            setupModal('log-tree-modal', 'log-new-trees-btn', 'close-log-tree-modal', 'submit-log-tree', handleLogTreeSubmit);
+            
+            // Setup Log Report Modal
+            setupModal('log-report-modal', 'log-report-btn', 'close-log-report-modal', 'submit-log-report', handleLogReportSubmit);
+
+
+            // --- DATA LOADING ON DASHBOARD (MOCK/SIMULATION) ---
+            document.getElementById('current-challenge-start').addEventListener('click', () => {
+                alertCustom('Challenge Started', 'You are now tracking your "Plant 1 Tree This Week" challenge!');
+            });
+            
+            // --- EVENTS LISTENER (MOCK/SIMULATION) ---
+            document.querySelectorAll('.join-event-btn').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    const eventCard = e.target.closest('.event-card');
+                    const eventTitle = eventCard.querySelector('.event-title').textContent;
+                    
+                    // Prevent joining twice
+                    if (e.target.textContent === 'Attending') return;
+
+                    // Simulate joining
+                    e.target.textContent = 'Attending';
+                    e.target.classList.remove('bg-green-500', 'hover:bg-green-600');
+                    e.target.classList.add('bg-gray-400', 'cursor-default');
+                    e.target.disabled = true;
+
+                    alertCustom('Joined!', `You successfully joined the event: ${eventTitle}`);
+                });
+            });
+
+            // --- MAP FEATURE MOCK/SIMULATION ---
+            document.getElementById('filter-map-btn').addEventListener('click', () => {
+                alertCustom('Feature Disabled', 'Map filtering is a non-functional placeholder for the current scope.');
+            });
+            
+            // --- GUIDE FEATURE MOCK/SIMULATION ---
+            document.querySelectorAll('.guide-item-details').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    const species = e.target.closest('.guide-item').querySelector('.species-name').textContent;
+                    alertCustom('Species Details', `Showing detailed conservation information for ${species}.`);
+                });
+            });
+            
+            // Set initial state
+            loadInitialData();
+        };
+        
+        window.handleSignOut = handleSignOut;
+
+    </script>
+
+    <!-- Custom Alert Modal (Replaces alert() and confirm()) -->
+    <div id="custom-alert" class="hidden fixed inset-0 bg-black bg-opacity-40 z-50 flex items-center justify-center p-4">
+        <div class="bg-white rounded-xl shadow-2xl p-6 max-w-sm w-full transform transition-all">
+            <h3 id="alert-title" class="text-lg font-semibold text-gray-800 mb-2">Title</h3>
+            <p id="alert-message" class="text-sm text-gray-600 mb-4">Message</p>
+            <button onclick="document.getElementById('custom-alert').classList.add('hidden')"
+                    class="w-full py-2 bg-green-500 text-white font-semibold rounded-lg hover:bg-green-600 transition duration-150">
+                OK
+            </button>
+        </div>
+    </div>
+
+    <!-- Main Mobile Container -->
+    <div id="app-container" class="relative">
+
+        <!-- 0. LANDING/LOGIN/SIGNUP PAGES -->
+        
+        <!-- Login Page -->
+        <div id="login-page" class="page-content min-h-screen p-6 flex flex-col justify-between hidden">
+            <!-- Background elements (mockup style) -->
+            <div class="absolute inset-0 overflow-hidden">
+                <div class="absolute top-[-10vh] left-[-20%] w-4/5 h-1/2 bg-green-200 opacity-20 rounded-full filter blur-3xl"></div>
+                <div class="absolute bottom-[-10vh] right-[-20%] w-3/5 h-1/3 bg-green-300 opacity-20 rounded-full filter blur-3xl"></div>
+            </div>
+
+            <div class="relative z-10 text-center pt-16">
+                <div class="mb-4">
+                    <h1 class="text-4xl font-extrabold text-green-700 tracking-wide">GREEN TRACK</h1>
+                    <p class="text-sm text-gray-600 mt-1">Track your environmental impact, one action at a time.</p>
+                </div>
+
+                <div class="bg-white p-6 rounded-2xl shadow-xl mt-8">
+                    <h2 class="text-2xl font-bold text-gray-800 mb-6">LOGIN</h2>
+                    <form id="login-form">
+                        <div class="mb-4">
+                            <input id="login-email" type="email" placeholder="Email Address" required
+                                class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-green-500 focus:border-green-500">
+                        </div>
+                        <div class="mb-4 relative">
+                            <input id="login-password" type="password" placeholder="Password" required
+                                class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-green-500 focus:border-green-500">
+                        </div>
+                        <div class="flex justify-between text-sm mb-6">
+                            <label class="flex items-center text-gray-600">
+                                <input type="checkbox" class="rounded border-gray-300 text-green-600 focus:ring-green-500 mr-2">
+                                Remember me
+                            </label>
+                            <a href="#" id="forgot-password-link" class="text-green-600 hover:underline">Forgot password</a>
+                        </div>
+                        <button type="submit"
+                            class="w-full py-3 bg-green-500 text-white font-semibold rounded-lg shadow-lg hover:bg-green-600 transition duration-150">
+                            Sign In
+                        </button>
+                    </form>
+
+                    <div class="mt-6 text-sm">
+                        Don't have an account? <a href="#" id="sign-up-here-link" class="text-green-600 font-semibold hover:underline">Sign up here</a>
+                    </div>
+                </div>
+            </div>
+            
+            <footer class="text-center text-xs text-gray-500 p-4 relative z-10">
+                By joining, you agree to the Green Track App <a href="#" class="text-green-600 hover:underline">Terms of Service</a> and to occasionally receive emails from us. Please read our <a href="#" class="text-green-600 hover:underline">Privacy Policy</a> to know how we use your personal data.
+            </footer>
+        </div>
+
+        <!-- Sign Up Page -->
+        <div id="signup-page" class="page-content min-h-screen p-6 flex flex-col justify-between hidden">
+             <!-- Background elements (mockup style) -->
+            <div class="absolute inset-0 overflow-hidden">
+                <div class="absolute top-[-10vh] left-[-20%] w-4/5 h-1/2 bg-green-200 opacity-20 rounded-full filter blur-3xl"></div>
+                <div class="absolute bottom-[-10vh] right-[-20%] w-3/5 h-1/3 bg-green-300 opacity-20 rounded-full filter blur-3xl"></div>
+            </div>
+
+            <div class="relative z-10 text-center pt-16">
+                <div class="mb-4">
+                    <h1 class="text-4xl font-extrabold text-green-700 tracking-wide">GREEN TRACK</h1>
+                    <p class="text-sm text-gray-600 mt-1">Join the community today.</p>
+                </div>
+
+                <div class="bg-white p-6 rounded-2xl shadow-xl mt-8">
+                    <h2 class="text-2xl font-bold text-gray-800 mb-6">SIGN UP</h2>
+                    <form id="signup-form">
+                        <div class="mb-4">
+                            <select id="signup-role" required
+                                class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-green-500 focus:border-green-500 text-gray-500">
+                                <option value="" disabled selected>Select Role (Volunteer or Organizer)</option>
+                                <option value="volunteer">Volunteer</option>
+                                <option value="organizer">Organizer</option>
+                            </select>
+                        </div>
+                        <div id="team-name-group" class="mb-4 hidden">
+                            <input id="signup-team-name" type="text" placeholder="EcoTeam Name (Organizers Only)"
+                                class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-green-500 focus:border-green-500">
+                        </div>
+                        <div class="mb-4">
+                            <input id="signup-email" type="email" placeholder="Email Address" required
+                                class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-green-500 focus:border-green-500">
+                        </div>
+                        <div class="mb-6 relative">
+                            <input id="signup-password" type="password" placeholder="Password (min 6 characters)" required minlength="6"
+                                class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-green-500 focus:border-green-500">
+                        </div>
+                        
+                        <button type="submit"
+                            class="w-full py-3 bg-green-500 text-white font-semibold rounded-lg shadow-lg hover:bg-green-600 transition duration-150">
+                            Sign Up
+                        </button>
+                    </form>
+
+                    <div class="mt-6 text-sm">
+                        Already have an account? <a href="#" id="login-here-link" class="text-green-600 font-semibold hover:underline">Log in here</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 1. DASHBOARD PAGE -->
+        <div id="dashboard-page" class="page-content p-4 hidden">
+            <header class="flex items-center justify-between mb-6 pt-4">
+                <div class="gtv-logo">GTA</div>
+            </header>
+            
+            <h1 id="welcome-name" class="text-2xl font-bold text-gray-800 mb-6">Hello, Volunteer!</h1>
+
+            <section class="dashboard mb-8">
+                <h2 class="text-lg font-bold text-gray-700 mb-3 border-b-2 border-green-500 inline-block">Dashboard</h2>
+                <div class="grid grid-cols-3 gap-3">
+                    <div class="bg-gray-100 p-3 rounded-xl shadow-md text-center">
+                        <p id="dashboard-trees-logged" class="text-2xl font-bold text-green-600">0</p>
+                        <p class="text-xs text-gray-500 mt-1">Trees Logged</p>
+                    </div>
+                    <div class="bg-gray-100 p-3 rounded-xl shadow-md text-center">
+                        <p id="dashboard-points-earned" class="text-2xl font-bold text-green-600">0</p>
+                        <p class="text-xs text-gray-500 mt-1">Points Earned</p>
+                    </div>
+                    <div class="bg-gray-100 p-3 rounded-xl shadow-md text-center cursor-pointer hover:bg-gray-200">
+                        <p class="text-2xl font-bold text-green-600">My Team</p>
+                        <p class="text-xs text-gray-500 mt-1">View Team</p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Eco-Awareness Tips -->
+            <section class="mb-8">
+                <h3 class="text-md font-semibold text-gray-700 mb-2">Daily Awareness Tip</h3>
+                <div class="bg-green-50 p-4 rounded-xl text-sm text-gray-700 border border-green-200">
+                    <p class="font-bold text-green-600">**Water Wisely**</p>
+                    <p>If planting in dry months, establish a consistent watering schedule for the first year to ensure sapling survival.</p>
+                </div>
+            </section>
+            
+            <!-- Quick Navigation / Log Buttons -->
+            <section class="flex space-x-3 mb-8">
+                <button id="log-new-trees-btn"
+                    class="flex-1 py-3 bg-green-500 text-white font-semibold rounded-full shadow-lg hover:bg-green-600 transition duration-150">
+                    <i class="fas fa-tree mr-2"></i> Log New Trees
+                </button>
+                <button id="log-report-btn"
+                    class="flex-1 py-3 bg-red-500 text-white font-semibold rounded-full shadow-lg hover:bg-red-600 transition duration-150">
+                    <i class="fas fa-exclamation-triangle mr-2"></i> Log Report/s
+                </button>
+            </section>
+            
+            <!-- Current Challenges -->
+            <section>
+                <h3 class="text-md font-semibold text-gray-700 mb-3">Active Challenges</h3>
+                <div class="bg-gray-100 p-4 rounded-xl shadow-md flex justify-between items-center">
+                    <div>
+                        <p class="font-semibold text-gray-800">Plant 1 Tree This Week</p>
+                        <p class="text-xs text-gray-500 mt-1">Reward: 50 points • Due: Sunday</p>
+                    </div>
+                    <button id="current-challenge-start"
+                        class="px-4 py-2 bg-green-500 text-white text-sm font-semibold rounded-full hover:bg-green-600 transition duration-150">
+                        Start
+                    </button>
+                </div>
+            </section>
+
+        </div>
+
+        <!-- 3. EVENTS CALENDAR PAGE -->
+        <div id="events-page" class="page-content p-4 hidden">
+            <header class="flex items-center justify-between mb-6 pt-4">
+                <div class="gtv-logo">GTA</div>
+            </header>
+            <h1 class="text-2xl font-bold text-gray-800 mb-6">Events Calendar</h1>
+
+            <section class="mb-6">
+                <h2 class="text-lg font-bold text-gray-700 mb-3">Upcoming Events</h2>
+
+                <!-- Event Card 1 (Attending) -->
+                <div class="event-card bg-gray-50 p-4 rounded-xl shadow-md mb-4 border-l-4 border-green-500">
+                    <h3 class="event-title text-lg font-bold text-gray-800">Mangrove Planting</h3>
+                    <p class="text-sm text-gray-600 mt-1">Location: Opel Beach (<span class="font-semibold">3km away</span>)</p>
+                    <p class="text-sm text-gray-600">Event Type: Team & Volunteers</p>
+                    <p class="text-sm text-gray-600 mb-3">November 12, 2025 (2:30PM)</p>
+                    <p class="text-xs text-green-600 font-semibold mb-3">Organizer Notes: Libre Pamasko nga man!</p>
+                    <div class="flex justify-between items-center">
+                        <span class="text-xs text-green-700 bg-green-200 px-2 py-1 rounded-full font-medium">BuluaElem EcoTeam</span>
+                        <button
+                            class="px-4 py-2 bg-gray-400 text-white text-sm font-semibold rounded-full cursor-default" disabled>
+                            Attending
+                        </button>
+                    </div>
+                </div>
+                
+                <!-- Event Card 2 (Joinable) -->
+                <div class="event-card bg-gray-50 p-4 rounded-xl shadow-md mb-4 border-l-4 border-yellow-500">
+                    <h3 class="event-title text-lg font-bold text-gray-800">Clean-up Drive Balwarte</h3>
+                    <p class="text-sm text-gray-600 mt-1">Location: Opel Beach (<span class="font-semibold">5km away</span>)</p>
+                    <p class="text-sm text-gray-600">Event Type: Team & Volunteers</p>
+                    <p class="text-sm text-gray-600 mb-3">November 12, 2025 (2:30PM)</p>
+                    <p class="text-xs text-green-600 font-semibold mb-3">Organizer Notes: Libre Pamasko nga man!</p>
+                    <div class="flex justify-between items-center">
+                        <span class="text-xs text-green-700 bg-green-200 px-2 py-1 rounded-full font-medium">BuluaElem EcoTeam</span>
+                        <button class="join-event-btn px-4 py-2 bg-green-500 text-white text-sm font-semibold rounded-full hover:bg-green-600 transition duration-150">
+                            Join
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Event Card 3 (Joinable) -->
+                <div class="event-card bg-gray-50 p-4 rounded-xl shadow-md mb-4 border-l-4 border-blue-500">
+                    <h3 class="event-title text-lg font-bold text-gray-800">Coconut Planting & Cleanup drive</h3>
+                    <p class="text-sm text-gray-600 mt-1">Location: Bastion Beach (<span class="font-semibold">10km away</span>)</p>
+                    <p class="text-sm text-gray-600">Event Type: Team & Volunteers</p>
+                    <p class="text-sm text-gray-600 mb-3">March 12, 2026 (1:00PM)</p>
+                    <p class="text-xs text-green-600 font-semibold mb-3">Organizer Notes: Uraya is, laean adtong, laea!</p>
+                    <div class="flex justify-between items-center">
+                        <span class="text-xs text-green-700 bg-green-200 px-2 py-1 rounded-full font-medium">BonbonElem EcoTeam</span>
+                        <button class="join-event-btn px-4 py-2 bg-green-500 text-white text-sm font-semibold rounded-full hover:bg-green-600 transition duration-150">
+                            Join
+                        </button>
+                    </div>
+                </div>
+
+            </section>
+        </div>
+        
+        <!-- 4. COMMUNITY MAP PAGE -->
+        <div id="map-page" class="page-content p-4 hidden">
+            <header class="flex items-center justify-between mb-6 pt-4">
+                <div class="gtv-logo">GTA</div>
+            </header>
+            <h1 class="text-2xl font-bold text-gray-800 mb-6">Community Map</h1>
+
+            <div class="relative mb-6">
+                <input type="search" placeholder="Search site"
+                    class="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-green-500 focus:border-green-500 pl-10">
+                <i class="fas fa-search absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400"></i>
+            </div>
+
+            <!-- Map Mockup Area -->
+            <div id="map-mockup" class="mb-6 flex items-center justify-center text-gray-500 text-lg font-semibold">
+                <!-- Map dots (Dot Legend Simulation) -->
+                <p class="text-xl font-bold text-gray-700 z-10">Mapa ng katarungan</p>
+                <div class="map-dot bg-green-500" style="top: 20%; left: 30%;"></div>
+                <div class="map-dot bg-red-500" style="top: 40%; left: 55%;"></div>
+                <div class="map-dot bg-yellow-500" style="top: 70%; left: 20%;"></div>
+                <div class="map-dot bg-blue-500" style="top: 60%; left: 40%;"></div>
+                <div class="map-dot bg-green-500" style="top: 80%; left: 75%;"></div>
+                <div class="map-dot bg-red-500" style="top: 15%; left: 60%;"></div>
+                <div class="map-dot bg-yellow-500" style="top: 50%; left: 10%;"></div>
+            </div>
+
+            <!-- Dot Legend -->
+            <div class="grid grid-cols-2 gap-2 text-sm mb-6">
+                <div class="flex items-center">
+                    <span class="w-3 h-3 rounded-full bg-green-500 mr-2"></span> Approved sites / Active Events
+                </div>
+                <div class="flex items-center">
+                    <span class="w-3 h-3 rounded-full bg-red-500 mr-2"></span> Reports
+                </div>
+                <div class="flex items-center">
+                    <span class="w-3 h-3 rounded-full bg-blue-500 mr-2"></span> Tree Planting Locations
+                </div>
+                <div class="flex items-center">
+                    <span class="w-3 h-3 rounded-full bg-yellow-500 mr-2"></span> Pending Permit Zones
+                </div>
+            </div>
+
+            <!-- Filter Button (Non-functional Placeholder) -->
+            <button id="filter-map-btn"
+                class="w-full py-3 bg-gray-200 text-gray-700 font-semibold rounded-lg hover:bg-gray-300 transition duration-150 mb-6">
+                <i class="fas fa-filter mr-2"></i> Filter Map Layers (Non-Functional)
+            </button>
+            
+            <h2 class="text-lg font-bold text-gray-700 mb-3"><i class="fas fa-map-marker-alt text-green-500 mr-2"></i> Nearby Verified Sites</h2>
+            <!-- Site Cards (Reuse event card structure) -->
+            <div class="event-card bg-gray-50 p-4 rounded-xl shadow-md mb-4 border-l-4 border-green-500">
+                <h3 class="event-title text-lg font-bold text-gray-800">Mangrove Planting Site</h3>
+                <p class="text-sm text-gray-600 mt-1">Location: Opel Beach (<span class="font-semibold">2km away</span>)</p>
+                <p class="text-sm text-gray-600">Event Type: Team & Volunteers</p>
+                <p class="text-sm text-gray-600 mb-3">November 12, 2025 (2:30PM)</p>
+                <div class="flex justify-between items-center">
+                    <span class="text-xs text-green-700 bg-green-200 px-2 py-1 rounded-full font-medium">BuluaElem EcoTeam</span>
+                    <button
+                        class="px-4 py-2 bg-green-500 text-white text-sm font-semibold rounded-full hover:bg-green-600 transition duration-150">
+                        Join Event
+                    </button>
+                </div>
+            </div>
+
+            <div class="event-card bg-gray-50 p-4 rounded-xl shadow-md mb-4 border-l-4 border-blue-500">
+                <h3 class="event-title text-lg font-bold text-gray-800">Coconut Planting & Cleanup drive Site</h3>
+                <p class="text-sm text-gray-600 mt-1">Location: Bastion Beach (<span class="font-semibold">10km away</span>)</p>
+                <p class="text-sm text-gray-600">Event Type: Team & Volunteers</p>
+                <p class="text-sm text-gray-600 mb-3">March 12, 2026 (1:00PM)</p>
+                <div class="flex justify-between items-center">
+                    <span class="text-xs text-green-700 bg-green-200 px-2 py-1 rounded-full font-medium">BombomElem EcoTeam</span>
+                    <button
+                        class="px-4 py-2 bg-green-500 text-white text-sm font-semibold rounded-full hover:bg-green-600 transition duration-150">
+                        Join Event
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 9. PLANT & ANIMAL GUIDE PAGE -->
+        <div id="guide-page" class="page-content p-4 hidden">
+            <header class="flex items-center justify-between mb-6 pt-4">
+                <div class="gtv-logo">GTA</div>
+            </header>
+            <h1 class="text-2xl font-bold text-gray-800 mb-6">Plants & Animal Guide</h1>
+            <h2 class="text-lg font-semibold text-green-600 mb-4">Native Trees, Plants & Local Fauna</h2>
+
+            <div class="relative mb-6">
+                <input type="search" placeholder="Search species"
+                    class="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-green-500 focus:border-green-500 pl-10">
+                <i class="fas fa-search absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400"></i>
+            </div>
+            
+            <!-- Guide List -->
+            <div id="guide-list">
+                <!-- Guide Item 1 -->
+                <div class="guide-item bg-gray-50 p-4 rounded-xl shadow-md mb-4 flex items-center justify-between">
+                    <div class="flex items-center space-x-4">
+                        <div class="w-12 h-12 bg-gray-200 rounded-lg flex items-center justify-center text-xl text-gray-500">
+                            <i class="fas fa-leaf"></i>
+                        </div>
+                        <div>
+                            <p class="species-name font-semibold text-gray-800">Narra Tree</p>
+                            <p class="text-xs text-gray-500">Importance: Pioneer species</p>
+                            <p class="text-xs text-red-500">Status: Vulnerable</p>
+                        </div>
+                    </div>
+                    <button class="guide-item-details px-4 py-2 bg-green-500 text-white text-sm font-semibold rounded-full hover:bg-green-600 transition duration-150">
+                        Details
+                    </button>
+                </div>
+                
+                <!-- Guide Item 2 -->
+                <div class="guide-item bg-gray-50 p-4 rounded-xl shadow-md mb-4 flex items-center justify-between">
+                    <div class="flex items-center space-x-4">
+                        <div class="w-12 h-12 bg-gray-200 rounded-lg flex items-center justify-center text-xl text-gray-500">
+                            <i class="fas fa-dove"></i>
+                        </div>
+                        <div>
+                            <p class="species-name font-semibold text-gray-800">Philippine Eagle</p>
+                            <p class="text-xs text-gray-500">Importance: Apex predator</p>
+                            <p class="text-xs text-red-700 font-bold">Status: Critically Endangered</p>
+                        </div>
+                    </div>
+                    <button class="guide-item-details px-4 py-2 bg-green-500 text-white text-sm font-semibold rounded-full hover:bg-green-600 transition duration-150">
+                        Details
+                    </button>
+                </div>
+                
+                <!-- Guide Item 3 -->
+                <div class="guide-item bg-gray-50 p-4 rounded-xl shadow-md mb-4 flex items-center justify-between">
+                    <div class="flex items-center space-x-4">
+                        <div class="w-12 h-12 bg-gray-200 rounded-lg flex items-center justify-center text-xl text-gray-500">
+                            <i class="fas fa-bug"></i>
+                        </div>
+                        <div>
+                            <p class="species-name font-semibold text-gray-800">Black Beetle</p>
+                            <p class="text-xs text-gray-500">Importance: Decomposer</p>
+                            <p class="text-xs text-yellow-600">Status: Stable</p>
+                        </div>
+                    </div>
+                    <button class="guide-item-details px-4 py-2 bg-green-500 text-white text-sm font-semibold rounded-full hover:bg-green-600 transition duration-150">
+                        Details
+                    </button>
+                </div>
+
+            </div>
+        </div>
+        
+        <!-- PROFILE PAGE -->
+        <div id="profile-page" class="page-content p-4 hidden">
+            <header class="flex items-center justify-between mb-6 pt-4">
+                <div class="gtv-logo">GTA</div>
+            </header>
+            <h1 class="text-2xl font-bold text-gray-800 mb-8">My Profile & Settings</h1>
+
+            <section class="text-center mb-10">
+                <div class="w-24 h-24 mx-auto bg-gray-200 rounded-full flex items-center justify-center text-4xl text-gray-500 mb-3">
+                    <i class="fas fa-user-circle"></i>
+                </div>
+                <p id="profile-name" class="text-xl font-bold text-gray-800">User Name</p>
+                <p id="profile-role" class="text-sm text-green-600 font-semibold mt-1">Volunteer</p>
+                <p class="text-xs text-gray-500">User ID: <span id="profile-userid-display" class="font-mono text-xs">N/A</span></p>
+            </section>
+            
+            <!-- Achievements Section -->
+            <section class="mb-8">
+                <h2 class="text-lg font-bold text-gray-700 mb-3">Achievements</h2>
+                <div class="bg-gray-100 p-4 rounded-xl border border-gray-200">
+                    <p class="text-sm text-gray-700 mb-3">Recent Achievement: 1 ton trash cleaned with team</p>
+                    <button id="view-achievements-btn"
+                        class="w-full py-2 bg-green-500 text-white text-sm font-semibold rounded-lg hover:bg-green-600 transition duration-150">
+                        View Achievements and Certifications
+                    </button>
+                </div>
+            </section>
+            
+            <!-- Team Section (Placeholder) -->
+            <section class="mb-8">
+                <h2 class="text-lg font-bold text-gray-700 mb-3">Eco Team: <span class="text-green-600">CMU EcoTeam</span></h2>
+                <button
+                    class="px-4 py-1 bg-green-200 text-green-700 text-xs font-semibold rounded-full hover:bg-green-300 transition duration-150">
+                    Manage Team's
+                </button>
+            </section>
+
+            <!-- Settings Menu -->
+            <section class="space-y-4 mb-10">
+                <a href="#" class="block text-gray-700 font-medium hover:text-green-600">Security & Privacy</a>
+                <a href="#" class="block text-gray-700 font-medium hover:text-green-600">Give Feedback</a>
+                <a href="#" class="block text-gray-700 font-medium hover:text-green-600">Theme</a>
+                <button id="logout-btn" class="block text-red-500 font-medium hover:text-red-600">
+                    Logout
+                </button>
+            </section>
+        </div>
+
+
+        <!-- MODALS (Tree Tracker and Report Feature) -->
+
+        <!-- 5. Tree Planting Tracker MODAL -->
+        <div id="log-tree-modal" class="hidden fixed inset-0 bg-black bg-opacity-40 z-40 flex items-center justify-center p-4">
+            <div class="bg-white rounded-2xl shadow-2xl p-6 max-w-sm w-full transform transition-all">
+                <h3 class="text-xl font-bold text-gray-800 mb-6">Log New Trees</h3>
+                <form id="log-tree-form">
+                    <div class="mb-4">
+                        <select id="log-tree-action-type" required
+                            class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-green-500 focus:border-green-500 text-gray-500">
+                            <option value="planting" selected>Action type: Planting</option>
+                            <option value="reporting">Action type: Monitoring</option>
+                        </select>
+                    </div>
+                    <div class="mb-4">
+                        <input id="log-tree-species" type="text" placeholder="Species (e.g., oak plant)" required
+                            class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-green-500 focus:border-green-500">
+                    </div>
+                    <div class="mb-6">
+                        <input id="log-tree-location" type="text" placeholder="Location details (GPS Tagging Simulated)" required
+                            class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-green-500 focus:border-green-500">
+                    </div>
+                    
+                    <!-- Photo Upload Simulation -->
+                    <div class="mb-6 p-4 border-2 border-dashed border-gray-300 rounded-xl text-center">
+                        <p class="font-semibold text-gray-700 mb-3">Photo Upload</p>
+                        <div class="w-16 h-16 mx-auto bg-gray-100 rounded-lg flex items-center justify-center text-2xl text-gray-500 mb-2">
+                            <i class="fas fa-image"></i>
+                        </div>
+                        <input type="file" id="log-tree-photo" accept="image/*" class="hidden">
+                        <label for="log-tree-photo"
+                            class="inline-block px-4 py-2 bg-green-500 text-white text-sm font-semibold rounded-full cursor-pointer hover:bg-green-600 transition duration-150">
+                            Upload Photo
+                        </label>
+                    </div>
+
+                    <div class="flex justify-end space-x-3">
+                        <button type="button" id="close-log-tree-modal"
+                            class="px-5 py-2 text-gray-600 font-semibold rounded-lg hover:bg-gray-100 transition duration-150">
+                            Cancel
+                        </button>
+                        <button type="submit" id="submit-log-tree"
+                            class="px-5 py-2 bg-green-500 text-white font-semibold rounded-lg hover:bg-green-600 transition duration-150">
+                            Submit
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- 7. Report Feature MODAL -->
+        <div id="log-report-modal" class="hidden fixed inset-0 bg-black bg-opacity-40 z-40 flex items-center justify-center p-4">
+            <div class="bg-white rounded-2xl shadow-2xl p-6 max-w-sm w-full transform transition-all">
+                <h3 class="text-xl font-bold text-gray-800 mb-6">Log Report/s</h3>
+                <form id="log-report-form">
+                    <div class="mb-4">
+                        <input id="log-report-location" type="text" placeholder="Nearest Map Location (GPS Tagging Simulated)"
+                            class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-green-500 focus:border-green-500">
+                    </div>
+                    <div class="mb-4">
+                        <input id="log-report-summary" type="text" placeholder="Report Summary (e.g., trash, logging)" required
+                            class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-green-500 focus:border-green-500">
+                    </div>
+                    <div class="mb-6">
+                        <textarea id="log-report-details" rows="3" placeholder="Detailed Report"
+                            class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-green-500 focus:border-green-500"></textarea>
+                    </div>
+                    
+                    <!-- Photo Upload Simulation -->
+                    <div class="mb-6 p-4 border-2 border-dashed border-gray-300 rounded-xl text-center">
+                        <p class="font-semibold text-gray-700 mb-3">Photo Upload</p>
+                        <div class="w-16 h-16 mx-auto bg-gray-100 rounded-lg flex items-center justify-center text-2xl text-gray-500 mb-2">
+                            <i class="fas fa-image"></i>
+                        </div>
+                        <input type="file" id="log-report-photo" accept="image/*" class="hidden">
+                        <label for="log-report-photo"
+                            class="inline-block px-4 py-2 bg-green-500 text-white text-sm font-semibold rounded-full cursor-pointer hover:bg-green-600 transition duration-150">
+                            Upload Photo
+                        </label>
+                    </div>
+
+                    <div class="flex justify-end space-x-3">
+                        <button type="button" id="close-log-report-modal"
+                            class="px-5 py-2 text-gray-600 font-semibold rounded-lg hover:bg-gray-100 transition duration-150">
+                            Cancel
+                        </button>
+                        <button type="submit" id="submit-log-report"
+                            class="px-5 py-2 bg-green-500 text-white font-semibold rounded-lg hover:bg-green-600 transition duration-150">
+                            Submit
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+        
+        <!-- Achievements/Certifications MODAL -->
+        <div id="achievements-modal" class="hidden fixed inset-0 bg-black bg-opacity-40 z-40 flex items-center justify-center p-4">
+            <div class="bg-white rounded-2xl shadow-2xl p-6 max-w-sm w-full transform transition-all">
+                <div class="flex border-b mb-4">
+                    <button class="flex-1 py-2 font-bold text-green-600 border-b-2 border-green-600">Certifications</button>
+                    <button class="flex-1 py-2 font-medium text-gray-500">Achievements</button>
+                </div>
+
+                <div class="h-64 overflow-y-auto space-y-4 pr-2">
+                    <!-- Achievement Item 1 -->
+                    <div class="flex items-center justify-between bg-gray-50 p-3 rounded-lg border border-gray-200">
+                        <div class="flex items-center space-x-3">
+                            <div class="w-10 h-10 bg-gray-200 rounded-lg flex items-center justify-center text-xl text-gray-500">
+                                <i class="fas fa-award"></i>
+                            </div>
+                            <span class="text-sm font-medium">Brgy Opol Planting</span>
+                        </div>
+                        <button class="px-3 py-1 bg-green-500 text-white text-xs font-semibold rounded-full hover:bg-green-600">
+                            Generate & Download
+                        </button>
+                    </div>
+                    
+                    <!-- Achievement Item 2 -->
+                    <div class="flex items-center justify-between bg-gray-50 p-3 rounded-lg border border-gray-200">
+                        <div class="flex items-center space-x-3">
+                            <div class="w-10 h-10 bg-gray-200 rounded-lg flex items-center justify-center text-xl text-gray-500">
+                                <i class="fas fa-award"></i>
+                            </div>
+                            <span class="text-sm font-medium">Coconut Planting Bukidnen</span>
+                        </div>
+                        <button class="px-3 py-1 bg-green-500 text-white text-xs font-semibold rounded-full hover:bg-green-600">
+                            Generate & Download
+                        </button>
+                    </div>
+
+                    <!-- Achievement Item 3 -->
+                    <div class="flex items-center justify-between bg-gray-50 p-3 rounded-lg border border-gray-200">
+                        <div class="flex items-center space-x-3">
+                            <div class="w-10 h-10 bg-gray-200 rounded-lg flex items-center justify-center text-xl text-gray-500">
+                                <i class="fas fa-award"></i>
+                            </div>
+                            <span class="text-sm font-medium">Brgy Riverside Planting</span>
+                        </div>
+                        <button class="px-3 py-1 bg-green-500 text-white text-xs font-semibold rounded-full hover:bg-green-600">
+                            Generate & Download
+                        </button>
+                    </div>
+                </div>
+
+                <div class="flex justify-end space-x-3 mt-6">
+                    <button type="button" id="close-achievements-modal"
+                        class="px-5 py-2 text-gray-600 font-semibold rounded-lg hover:bg-gray-100 transition duration-150">
+                        Cancel
+                    </button>
+                    <button type="button"
+                        class="px-5 py-2 bg-green-500 text-white font-semibold rounded-lg hover:bg-green-600 transition duration-150">
+                        Create
+                    </button>
+                </div>
+            </div>
+        </div>
+
+
+        <!-- Fixed Bottom Navigation Bar (Appears after login) -->
+        <nav id="bottom-nav" class="fixed bottom-0 left-0 right-0 max-w-sm mx-auto bg-white border-t border-gray-200 shadow-lg z-30">
+            <div class="flex justify-around items-center h-16">
+                <!-- Home -->
+                <button data-page="dashboard" class="nav-item flex flex-col items-center text-sm text-gray-500 transition duration-150 active:scale-95">
+                    <i class="fas fa-home text-lg mb-1"></i>
+                    <span>Home</span>
+                </button>
+                <!-- Map -->
+                <button data-page="map" class="nav-item flex flex-col items-center text-sm text-gray-500 transition duration-150 active:scale-95">
+                    <i class="fas fa-map text-lg mb-1"></i>
+                    <span>Map</span>
+                </button>
+                <!-- Events -->
+                <button data-page="events" class="nav-item flex flex-col items-center text-sm text-gray-500 transition duration-150 active:scale-95">
+                    <i class="fas fa-calendar-alt text-lg mb-1"></i>
+                    <span>Events</span>
+                </button>
+                <!-- Guide -->
+                <button data-page="guide" class="nav-item flex flex-col items-center text-sm text-gray-500 transition duration-150 active:scale-95">
+                    <i class="fas fa-book-open text-lg mb-1"></i>
+                    <span>Guide</span>
+                </button>
+                <!-- Profile -->
+                <button data-page="profile" class="nav-item flex flex-col items-center text-sm text-gray-500 transition duration-150 active:scale-95">
+                    <i class="fas fa-user text-lg mb-1"></i>
+                    <span>Profile</span>
+                </button>
+            </div>
+        </nav>
+
+    </div>
+</body>
+</html>
