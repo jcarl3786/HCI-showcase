@@ -15,14 +15,7 @@
         }
         /* Style the green header logo text */
         .gtv-logo {
-            font-weight: 800;
-            color: #10B981; /* Emerald 500 */
-            line-height: 1;
-            font-size: 1.5rem;
-            display: inline-block;
-            border: 2px solid #10B981;
-            padding: 0.1rem 0.3rem;
-            border-radius: 6px;
+            width: 50px;
         }
         /* Custom map area styling for mockup */
         #map-mockup {
